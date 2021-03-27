@@ -15,9 +15,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-// TODO: Move this package out into a module
-// under Apache 2.0 license.
-
 // CertificateData contains a x509.Certificate and PEM bytes.
 type CertificateData interface {
 	// Returns a certificate.
