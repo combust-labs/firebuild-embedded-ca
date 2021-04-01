@@ -35,6 +35,39 @@ func (d *defaultCertificateData) PEM() []byte {
 	return d.pem
 }
 
+// CertificateWithKeyData contains a x509.Certificate and rsa.PrivateKey.
+type CertificateWithKeyData interface {
+	// Returns a certificate.
+	Certificate() *x509.Certificate
+	// Returns certificate PEM bytes.
+	CertificatePEM() []byte
+	// Returns a key.
+	Key() *rsa.PrivateKey
+	// Returns key PEM bytes.
+	KeyPEM() []byte
+}
+
+type defaultCertificateWithKeyData struct {
+	cert    *x509.Certificate
+	certpem []byte
+	key     *rsa.PrivateKey
+	keypem  []byte
+}
+
+func (d *defaultCertificateWithKeyData) Certificate() *x509.Certificate {
+	return d.cert
+}
+func (d *defaultCertificateWithKeyData) CertificatePEM() []byte {
+	return d.certpem
+}
+
+func (d *defaultCertificateWithKeyData) Key() *rsa.PrivateKey {
+	return d.key
+}
+func (d *defaultCertificateWithKeyData) KeyPEM() []byte {
+	return d.keypem
+}
+
 // EmbeddedCAConfig is the embedded CA configuration.
 type EmbeddedCAConfig struct {
 	Addresses       []string
@@ -59,6 +92,10 @@ func (c *EmbeddedCAConfig) WithDefaultsApplied() *EmbeddedCAConfig {
 
 // EmbeddedCA represents an embedded bootstrap time only CA.
 type EmbeddedCA interface {
+	// CAPEMChain returns CA chain in the PEM format.
+	CAPEMChain() []string
+	// Creates a new client certificate and the certificate with a private key.
+	NewClientCert() (CertificateWithKeyData, error)
 	// Creates a new client certificate and constructs a tls.Config valid for this CA.
 	NewClientCertTLSConfig(string) (*tls.Config, error)
 	// Creates a new server certificate and constructs a tls.Config valid for this CA.
@@ -72,7 +109,8 @@ type defaultEmbeddedCA struct {
 
 	logger hclog.Logger
 
-	chain *x509.CertPool
+	chain     *x509.CertPool
+	chainPEMs []string
 
 	rootCertificateData CertificateData
 	rootKey             *rsa.PrivateKey
@@ -98,6 +136,10 @@ func NewDefaultEmbeddedCAWithLogger(config *EmbeddedCAConfig, logger hclog.Logge
 	return eca.initCA()
 }
 
+func (eca *defaultEmbeddedCA) CAPEMChain() []string {
+	return eca.chainPEMs
+}
+
 func (eca *defaultEmbeddedCA) genCert(template, parent *x509.Certificate, publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (CertificateData, error) {
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, parent, publicKey, privateKey)
 	if err != nil {
@@ -112,8 +154,7 @@ func (eca *defaultEmbeddedCA) genCert(template, parent *x509.Certificate, public
 	return &defaultCertificateData{cert: cert, pem: certPEM}, nil
 }
 
-// NewClientCertTLSConfig creates a new client certificate and constructs a tls.Config valid for this CA.
-func (eca *defaultEmbeddedCA) NewClientCertTLSConfig(serverNameOverride string) (*tls.Config, error) {
+func (eca *defaultEmbeddedCA) NewClientCert() (CertificateWithKeyData, error) {
 	priv, err := eca.getNewKey()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed generating client key")
@@ -124,8 +165,24 @@ func (eca *defaultEmbeddedCA) NewClientCertTLSConfig(serverNameOverride string) 
 	if err != nil {
 		return nil, err
 	}
+
 	clientKeyBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	clientTLSCertificate, err := tls.X509KeyPair(clientCertData.PEM(), clientKeyBytes)
+
+	return &defaultCertificateWithKeyData{
+		cert:    clientCertData.Certificate(),
+		certpem: clientCertData.PEM(),
+		key:     priv,
+		keypem:  clientKeyBytes,
+	}, nil
+}
+
+// NewClientCertTLSConfig creates a new client certificate and constructs a tls.Config valid for this CA.
+func (eca *defaultEmbeddedCA) NewClientCertTLSConfig(serverNameOverride string) (*tls.Config, error) {
+	certData, err := eca.NewClientCert()
+	if err != nil {
+		return nil, err
+	}
+	clientTLSCertificate, err := tls.X509KeyPair(certData.CertificatePEM(), []byte(certData.KeyPEM()))
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +283,8 @@ func (eca *defaultEmbeddedCA) getRootCACertTemplate() *x509.Certificate {
 
 func (eca *defaultEmbeddedCA) initCA() (EmbeddedCA, error) {
 
+	eca.chainPEMs = []string{}
+
 	rootKey, err := eca.getNewKey()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed generating root ca key")
@@ -244,6 +303,7 @@ func (eca *defaultEmbeddedCA) initCA() (EmbeddedCA, error) {
 	eca.rootKey = rootKey
 	eca.signingCertificateData = rootCertData
 	eca.signingKey = rootKey
+	eca.chainPEMs = append(eca.chainPEMs, string(rootCertData.PEM()))
 	eca.chain.AppendCertsFromPEM(rootCertData.PEM())
 
 	eca.logger.Debug("root certificate appended to the pool, signer set to root certificate")
@@ -266,6 +326,7 @@ func (eca *defaultEmbeddedCA) initCA() (EmbeddedCA, error) {
 
 		eca.signingCertificateData = intermediateCertData
 		eca.signingKey = intermediateKey
+		eca.chainPEMs = append(eca.chainPEMs, string(intermediateCertData.PEM()))
 		eca.chain.AppendCertsFromPEM(intermediateCertData.PEM())
 
 		eca.logger.Debug("intermediate certificate appended to the pool, signer updated to intermediate")

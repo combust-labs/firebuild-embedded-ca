@@ -22,6 +22,10 @@ func TestEmbeddedCAWithIntermediate(t *testing.T) {
 		t.Fatal("expected embedded CA to be initialized, got error", err)
 	}
 
+	if len(embeddedCA.CAPEMChain()) != 2 {
+		t.Fatal("expected CA PEM chain to have two items")
+	}
+
 	serverTLSConfig, err := embeddedCA.NewServerCertTLSConfig()
 	if err != nil {
 		t.Fatal("expected server TLS config to be created, got error", err)
@@ -52,6 +56,10 @@ func TestEmbeddedCAWithoutIntermediate(t *testing.T) {
 	embeddedCA, err := NewDefaultEmbeddedCAWithLogger(caConfig, hclog.Default())
 	if err != nil {
 		t.Fatal("expected embedded CA to be initialized, got error", err)
+	}
+
+	if len(embeddedCA.CAPEMChain()) != 1 {
+		t.Fatal("expected CA PEM chain to have one item")
 	}
 
 	serverTLSConfig, err := embeddedCA.NewServerCertTLSConfig()
