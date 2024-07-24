@@ -98,6 +98,8 @@ type EmbeddedCA interface {
 	NewClientCert() (CertificateWithKeyData, error)
 	// Creates a new client certificate and constructs a tls.Config valid for this CA.
 	NewClientCertTLSConfig(string) (*tls.Config, error)
+	// Creates a new server certificate with a private key.
+	NewServerCert() (CertificateWithKeyData, error)
 	// Creates a new server certificate and constructs a tls.Config valid for this CA.
 	NewServerCertTLSConfig() (*tls.Config, error)
 }
@@ -193,8 +195,8 @@ func (eca *defaultEmbeddedCA) NewClientCertTLSConfig(serverNameOverride string) 
 	}, nil
 }
 
-// NewServerCertTLSConfig creates a new server certificate and constructs a tls.Config valid for this CA.
-func (eca *defaultEmbeddedCA) NewServerCertTLSConfig() (*tls.Config, error) {
+// NewServerCert creates a new server certificate with a private key.
+func (eca *defaultEmbeddedCA) NewServerCert() (CertificateWithKeyData, error) {
 	priv, err := eca.getNewKey()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed generating server key")
@@ -206,7 +208,22 @@ func (eca *defaultEmbeddedCA) NewServerCertTLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 	serverKeyBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	serverTLSCertificate, err := tls.X509KeyPair(serverCertData.PEM(), serverKeyBytes)
+	return &defaultCertificateWithKeyData{
+		cert:    serverCertData.Certificate(),
+		certpem: serverCertData.PEM(),
+		key:     priv,
+		keypem:  serverKeyBytes,
+	}, nil
+
+}
+
+// NewServerCertTLSConfig creates a new server certificate and constructs a tls.Config valid for this CA.
+func (eca *defaultEmbeddedCA) NewServerCertTLSConfig() (*tls.Config, error) {
+	certData, err := eca.NewServerCert()
+	if err != nil {
+		return nil, err
+	}
+	serverTLSCertificate, err := tls.X509KeyPair(certData.CertificatePEM(), certData.KeyPEM())
 	if err != nil {
 		return nil, err
 	}
